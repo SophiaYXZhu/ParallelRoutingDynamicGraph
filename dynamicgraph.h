@@ -18,7 +18,7 @@ class DynamicGraph {
         void snapshot();
     
         std::vector<std::vector<Vertex>>
-        min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pairs, int max_depth = 5) const;
+        min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pairs, std::vector<int>* arrival_time, int max_steps = 5) const;
     
         std::vector<int> k_core(int k = 1) const;
     

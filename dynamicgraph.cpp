@@ -102,13 +102,13 @@ void DynamicGraph::snapshot() {
     }
 }
 
-// Multiple Packages Routing Simulation (serial)
 static inline std::uint64_t pack_edge_key(int u, int v) {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(u)) << 32) | static_cast<std::uint32_t>(v);
 }
 
+// Multiple Packages Routing Simulation (parallel via dynamic scheduling)
 std::vector<std::vector<DynamicGraph::Vertex>>
-DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pairs, int max_steps) const
+DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pairs, std::vector<int>* arrival_time, int max_steps) const 
 {
     const auto &G = snapshot_adj_.empty() ? adj_ : snapshot_adj_;
     std::size_t n = G.size();
@@ -118,7 +118,7 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
     if (P == 0)
         return {};
 
-    // preprocess group pairs by destination and compute distances
+    // group by destination and build dist_to_dest[d][v] via BFS
     std::unordered_map<Vertex, int> dest_index;
     std::vector<Vertex> dest_list;
     dest_list.reserve(P);
@@ -137,7 +137,8 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
     int D = static_cast<int>(dest_list.size());
     std::vector<std::vector<int>> dist_to_dest(D, std::vector<int>(n, INF));
 
-    // run BFS backwards
+    // parallel over destinations as each BFS is independent
+    #pragma omp parallel for schedule(dynamic)
     for (int k=0; k < D; k++) {
         Vertex dest = dest_list[k];
         auto &dist = dist_to_dest[k];
@@ -151,7 +152,7 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
             q.pop();
 
             int du = dist[u];
-            for (const Edge& e : G[u]) {
+            for (const Edge &e : G[u]) {
                 Vertex v = e.to;
                 if (!active_[v]) 
                     continue;
@@ -172,11 +173,10 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
     };
 
     // initialize package state
-    std::vector<Vertex> pos(P); // currrent position
+    std::vector<Vertex> pos(P); // current position
     std::vector<Vertex> dst(P); // destination
     std::vector<bool> done(P, false);
-    std::vector<int> arrival_time(P, -1); // timestep at delivery
-    std::vector<std::vector<Vertex>> paths(P); // path taken
+    std::vector<std::vector<Vertex>> paths(P);
 
     for (int i=0; i < P; i++) {
         Vertex s = pairs[i].first;
@@ -184,7 +184,7 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
 
         if (s < 0 || d < 0 || static_cast<std::size_t>(s) >= n || static_cast<std::size_t>(d) >= n || !active_[s] || !active_[d]) {
             done[i] = true;
-            arrival_time[i] = -1;
+            (*arrival_time)[i] = -1;
             continue;
         }
 
@@ -193,7 +193,7 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
         paths[i].push_back(s);
         if (s == d) {
             done[i] = true;
-            arrival_time[i] = 0;
+            (*arrival_time)[i] = 0;
         }
     }
 
@@ -210,10 +210,10 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
 
     // simulation
     for (int t=0; t < max_steps && undelivered > 0; t++) {
-        std::vector<Vertex> desired_next(P);
-        desired_next.assign(P, -1);
+        std::vector<Vertex> desired_next(P, -1);
 
-        // each package choose a neighbor that decreases dist to its dest
+        // each package chooses neighbor that decreases dist to dest in parallel
+        #pragma omp parallel for schedule(static)
         for (int i=0; i < P; i++) {
             if (done[i]) {
                 desired_next[i] = pos[i];
@@ -231,7 +231,7 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
                 continue;
             }
 
-            for (const Edge& e : G[u]) {
+            for (const Edge &e : G[u]) {
                 Vertex v = e.to;
                 if (!active_[v]) 
                     continue;
@@ -246,34 +246,38 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
 
         // edge capacity constraint
         std::unordered_map<std::uint64_t, int> edge_owner;
-        edge_owner.reserve(2*P); // heuristic
-
+        edge_owner.reserve(2*P);
         std::vector<bool> can_move(P, false);
 
-        // resolve contention
         for (int i=0; i < P; i++) {
-            if (done[i])
+            if (done[i]) 
                 continue;
 
             Vertex u = pos[i];
             Vertex v = desired_next[i];
 
-            if (v == u || v < 0)
+            if (v == u || v < 0) 
                 continue;
 
             std::uint64_t key = pack_edge_key(u, v);
             auto it = edge_owner.find(key);
-            if (it == edge_owner.end()) { // claim edge if no one owns it
+            if (it == edge_owner.end()) {
                 edge_owner.emplace(key, i);
                 can_move[i] = true;
-            }
-            else // wait if someone owns the edge
+            } 
+            else
                 can_move[i] = false;
         }
 
-        // commit moves and update arrival state
-        undelivered = 0;
+        // commit moves and update state in parallel
+        int new_undelivered = 0;
+        int max_threads = omp_get_max_threads();
+        std::vector<int> local_counts(max_threads, 0);
+
+        #pragma omp parallel for schedule(static)
         for (int i=0; i < P; i++) {
+            int tid = omp_get_thread_num();
+
             if (done[i]) {
                 next_pos[i] = pos[i];
                 continue;
@@ -289,12 +293,17 @@ DynamicGraph::min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pai
 
             if (next_pos[i] == dst[i]) {
                 done[i] = true;
-                arrival_time[i] = t+1;
+                (*arrival_time)[i] = t+1;
             }
 
-            if (!done[i]) 
-                undelivered++;
+            if (!done[i])
+                local_counts[tid]++;
         }
+
+        for (int t=0; t < max_threads; t++)
+            new_undelivered += local_counts[t];
+
+        undelivered = new_undelivered;
         pos.swap(next_pos);
     }
     return paths;
