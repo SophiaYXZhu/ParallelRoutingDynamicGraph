@@ -15,11 +15,10 @@ using std::cout;
 using std::cerr;
 using std::endl;
 
-
 struct Config {
     int num_threads = 1;
-    int max_steps = 64;
-    int num_pairs = 256;
+    int max_steps = 100000;
+    int num_pairs = 50000;
     char mode = 'o';
 };
 
@@ -39,19 +38,20 @@ Config parse_args(int argc, char** argv) {
     return cfg;
 }
 
-
 bool edge_exists(const DynamicGraph& g, int u, int v) {
-    if (u == v) 
+    if (u == v)
         return true;
     auto neigh = g.neighbors(u);
     for (int x : neigh)
-        if (x == v) 
+        if (x == v)
             return true;
     return false;
 }
 
-bool check_routing_correctness(const DynamicGraph& g, const std::vector<std::pair<int,int>>& pairs, const std::vector<std::vector<int>>& paths, int max_steps) {
-    if (paths.size() != pairs.size()) 
+bool check_routing_correctness(const DynamicGraph& g, const 
+std::vector<std::pair<int,int>>& pairs, const 
+std::vector<std::vector<int>>& paths, int max_steps) {
+    if (paths.size() != pairs.size())
         return false;
 
     int P = static_cast<int>(pairs.size());
@@ -94,10 +94,10 @@ int main(int argc, char** argv) {
         omp_set_num_threads(cfg.num_threads);
     int used_threads = omp_get_max_threads();
 
-    const int N = 1024;
-    const double p = 2.0 / 3.0;
+    // Long chain: all vertices in a line, edges (i, i+1)
+    const int N = 32768;
 
-    cout << "Routing test on 1024-vertex dense graph (p = " << p << ")\n";
+    cout << "Routing test on long chain graph (N = " << N << ")\n";
     cout << "Using " << used_threads << " thread(s), max_steps = " << cfg.max_steps << ", num_pairs = " << cfg.num_pairs << ".\n";
 
     if (cfg.mode == 'p')
@@ -107,37 +107,35 @@ int main(int argc, char** argv) {
     else
         cout << "Mode: original min_cost_routing\n";
 
-    // build random graph
+    // build graph
     DynamicGraph g(N);
-    std::mt19937 rng(12345);
-    std::bernoulli_distribution bern(p);
-
     std::size_t edge_count = 0;
-    for (int u=0; u < N; u++) {
-        for (int v=u+1; v < N; v++) {
-            if (bern(rng)) {
-                g.add_edge(u, v);
-                edge_count++;
-            }
-        }
+    for (int u=0; u < N - 1; u++) {
+        g.add_edge(u, u + 1);
+        edge_count++;
     }
 
     cout << "Graph generated: N = " << N << ", M ≈ " << edge_count << " edges.\n";
 
-    // random (s, d) pairs
+    //many packages from left quarter to right quarter
     std::vector<std::pair<int,int>> pairs;
     pairs.reserve(cfg.num_pairs);
 
-    std::uniform_int_distribution<int> dist_v(0, N-1);
-    for (int i=0; i < cfg.num_pairs; i++) {
-        int s = dist_v(rng);
-        int d = dist_v(rng);
-        if (s == d)
+    std::mt19937 rng(12345);
+    std::uniform_int_distribution<int> dist_left(0, N / 4 - 1);
+    std::uniform_int_distribution<int> dist_right(3 * N / 4, N - 1);
+
+    for (int i = 0; i < cfg.num_pairs; i++) {
+        int s = dist_left(rng);
+        int d = dist_right(rng);
+        if (s == d) {
             d = (d+1) % N;
+        }
         pairs.emplace_back(s, d);
     }
 
     g.snapshot();
+
     auto start = std::chrono::steady_clock::now();
     std::vector<int> arrival_time(cfg.num_pairs, -1);
 
@@ -156,7 +154,7 @@ int main(int argc, char** argv) {
     bool ok = check_routing_correctness(g, pairs, paths, cfg.max_steps);
     int delivered = 0;
     int total_cost = 0;
-    for (std::size_t i=0; i < paths.size(); i++) {
+    for (std::size_t i = 0; i < paths.size(); i++) {
         if (!paths[i].empty() && paths[i].back() == pairs[i].second) {
             delivered++;
             if (total_cost < arrival_time[i])

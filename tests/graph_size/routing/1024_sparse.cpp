@@ -20,6 +20,7 @@ struct Config {
     int num_threads = 1;
     int max_steps = 64;
     int num_pairs = 256;
+    char mode = 'o';
 };
 
 Config parse_args(int argc, char** argv) {
@@ -32,6 +33,8 @@ Config parse_args(int argc, char** argv) {
             cfg.max_steps = std::stoi(argv[++i]);
         else if ((arg == "-p" || arg == "--pairs") && i + 1 < argc)
             cfg.num_pairs = std::stoi(argv[++i]);
+        else if ((arg == "-m" || arg == "--mode") && i + 1 < argc)
+            cfg.mode = argv[++i][0];
     }
     return cfg;
 }
@@ -97,6 +100,13 @@ int main(int argc, char** argv) {
     cout << "Routing test on 1024-vertex sparse graph (p = " << p << ")\n";
     cout << "Using " << used_threads << " thread(s), max_steps = " << cfg.max_steps << ", num_pairs = " << cfg.num_pairs << ".\n";
 
+    if (cfg.mode == 'p')
+        cout << "Mode: partitioned min_cost_routing_partitioned\n";
+    else if (cfg.mode == 'e')
+        cout << "Mode: edge-parallel min_cost_routing_edge_parallel\n";
+    else
+        cout << "Mode: original min_cost_routing\n";
+
     // build random graph
     DynamicGraph g(N);
     std::mt19937 rng(12345);
@@ -130,9 +140,17 @@ int main(int argc, char** argv) {
     g.snapshot();
     auto start = std::chrono::steady_clock::now();
     std::vector<int> arrival_time(cfg.num_pairs, -1);
-    std::vector<std::vector<int>> paths = g.min_cost_routing(pairs, &arrival_time, cfg.max_steps);
-    auto end = std::chrono::steady_clock::now();
 
+    std::vector<std::vector<int>> paths;
+    if (cfg.mode == 'p') {
+        paths = g.min_cost_routing_partitioned(pairs, &arrival_time, cfg.max_steps);
+    } else if (cfg.mode == 'e') {
+        paths = g.min_cost_routing_edge_parallel(pairs, &arrival_time, cfg.max_steps);
+    } else {
+        paths = g.min_cost_routing(pairs, &arrival_time, cfg.max_steps);
+    }
+
+    auto end = std::chrono::steady_clock::now();
     double ms = std::chrono::duration<double, std::milli>(end - start).count();
 
     bool ok = check_routing_correctness(g, pairs, paths, cfg.max_steps);

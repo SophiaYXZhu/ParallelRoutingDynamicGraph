@@ -19,7 +19,13 @@ class DynamicGraph {
     
         std::vector<std::vector<Vertex>>
         min_cost_routing(const std::vector<std::pair<Vertex, Vertex>>& pairs, std::vector<int>* arrival_time, int max_steps = 5) const;
-    
+
+        std::vector<std::vector<Vertex>> 
+        min_cost_routing_partitioned(const std::vector<std::pair<Vertex, Vertex>>& pairs, std::vector<int>* arrival_time, int max_steps = 5) const;
+
+        std::vector<std::vector<Vertex>> 
+        min_cost_routing_edge_parallel(const std::vector<std::pair<Vertex, Vertex>>& pairs, std::vector<int>* arrival_time, int max_steps = 5) const;
+
         std::vector<int> k_core(int k = 1) const;
     
     private:
