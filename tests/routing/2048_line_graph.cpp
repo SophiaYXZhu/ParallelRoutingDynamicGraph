@@ -112,7 +112,6 @@ int main(int argc, char** argv) {
     DynamicGraph g(N);
     for (int u=0; u < N-1; u++)
         g.add_edge(u, u+1);
-    std::size_t edge_count = N - 1;
 
     // all packages from 0 to N-1
     std::vector<std::pair<int,int>> pairs;

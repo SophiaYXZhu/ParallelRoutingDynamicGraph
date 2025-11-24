@@ -414,24 +414,12 @@ DynamicGraph::min_cost_routing_partitioned( const std::vector<std::pair<Vertex, 
 
     std::vector<Vertex> next_pos(P);
 
-    //partition vertices into subgraphs
+    // partition vertices into subgraphs by round-robin
     int T = omp_get_max_threads();
-    if (T <= 0) T = 1;
-
-    std::vector<Vertex> part_start(T + 1);
-    for (int t = 0; t <= T; t++) {
-        part_start[t] = static_cast<Vertex>((n * 1LL * t) / T);
-    }
-
-    auto vertex_partition = [&](Vertex v) -> int {
-        // binary search over part_start to find partition owning v
-        int lo = 0, hi = T;
-        while (lo + 1 < hi) {
-            int mid = (lo + hi) / 2;
-            if (v < part_start[mid]) hi = mid;
-            else lo = mid;
-        }
-        return lo;
+    if (T <= 0) 
+        T = 1;
+    auto vertex_partition = [T](Vertex v) -> int {
+        return static_cast<int>(v % T);
     };
 
     // Assign initial packets to partitions by their starting positions
@@ -555,24 +543,28 @@ DynamicGraph::min_cost_routing_partitioned( const std::vector<std::pair<Vertex, 
 
         // Swap positions for next timestep
         pos.swap(next_pos);
-
-        // Rebuild local_pkgs from thread_outgoing
-        for (int p = 0; p < T; p++) {
-            local_pkgs[p].clear();
-        }
-        for (int tid = 0; tid < T; tid++) {
-            for (int p = 0; p < T; p++) {
-                auto &buf = thread_outgoing[tid][p];
-                if (!buf.empty()) {
-                    local_pkgs[p].insert(local_pkgs[p].end(), buf.begin(), buf.end());
-                }
+        // each thread pulls its own incoming mail
+        #pragma omp parallel num_threads(T)
+        {
+            int tid = omp_get_thread_num();
+            local_pkgs[tid].clear();
+            for (int src=0; src < T; src++) {
+                auto &incoming = thread_outgoing[src][tid];
+                if (!incoming.empty())
+                    local_pkgs[tid].insert(local_pkgs[tid].end(), incoming.begin(), incoming.end());
             }
+
+            // synchronize so everyone has finished reading from thread_outgoing
+            #pragma omp barrier
+            for (int dst=0; dst < T; dst++) // each thread clears their own outgoing buffers
+                thread_outgoing[tid][dst].clear();
         }
 
-        // Recompute undelivered
+        // recompute undelivered
         undelivered = 0;
-        for (int i = 0; i < P; i++) {
-            if (!done[i]) undelivered++;
+        for (int i=0; i < P; i++) {
+            if (!done[i])
+                undelivered++;
         }
     }
 

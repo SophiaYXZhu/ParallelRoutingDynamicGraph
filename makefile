@@ -1,5 +1,5 @@
 CXX      = mpic++
-CXXFLAGS = -Wall -Wextra -O3 -std=c++20 -I. -fopenmp
+CXXFLAGS = -Wall -Wextra -O3 -std=c++20 -I. -fopenmp -Wno-free-nonheap-object
 
 all: tests
 
