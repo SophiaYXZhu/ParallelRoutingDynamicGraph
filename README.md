@@ -17,9 +17,6 @@ The underlying data structure is a sparse graph represented by adjacency lists. 
 
 In both of the two key analytics, the workloads are not SIMD amenable  due to irregular memory access patterns and control flow divergence. Traversing an adjacency list involves accessing the indices that are data dependent and non-contiguous. This requires expensive gather operations rather than efficient vector loads. In addition, the routing logic is highly dependent on the branch, including checking whether a neighbor is active, edge capacity, and comparing distances. These conditional branches cause serialization in SIMD lanes, negating the throughput benefits of vector instructions. However, we eventually made optimizations to data layouts that allow the compiler to auto-vectorize linear scans, such as the initial degree computation in k-core and the check for completion in routing. We deliberately chose a multicore CPU platform over a GPU because CPUs deal with irregularity and divergence more efficiently than SIMD architectures.
 
-## Project Overview
-Please refer to this doc for what this project is about: https://docs.google.com/document/d/1oxg-tKCexYw8OshllP46ZXYg4PcXCuVVvzN8hx8QYuI/](https://docs.google.com/document/d/1fJGb3wdToGd9lI4-tq156Pgj-uxjkK_7oeaf3CegNPs/
-
 ## Running Experiments
 Run `make` to compile the dynamicgraph.o library and all test cases in the `./test` directory.
 
@@ -65,7 +62,7 @@ Every undirected edge in the graph is represented by two slots in a flat, global
 - Decision Phase: Threads iterate over their assigned static chunk of packages. For each active package, the thread scans the adjacency list of the package’s current vertex and queries the precomputed BFS distance matrix dist to select the neighbor that maximally reduces the distance to the destination.
 - Reservation Phase: Threads attempt to reserve the edge corresponding to the chosen move. Each thread computes the unique slot index for the edge that connects the current vertex to its selected next hop, and performs an atomic Compare-And-Swap (CAS) operation. If CAS succeeds, the package claims the edge for the current timestep. If CAS fails, another package has already claimed the edge, forcing the current package to stall.
 
-<p align="center">![alt text](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/images/EdgeParallel.png)</p>
+<p align="center">![alt text](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/EdgeParallel.png)</p>
 
 These two phases are followed by a cleanup and commit phase. This design transforms the contention logic from a centralized serial queue into thousands of independent micro-contests distributed across memory, significantly reducing allocator pressure and serialization.
 
@@ -81,7 +78,7 @@ The graph vertices are statically partitioned among T threads using either a cyc
 - Exchange Phase: If a package moves to a vertex owned by a different thread, the thread enqueues the package index into an outgoing mailbox. A global barrier separates the calculation and communication phases, ensuring that all writes to the mailboxes are visible before reading.
 - Merge Phase: Threads scan the mailboxes addressed to them, retrieving incoming packages and merging them with the packages that remained within the partition to rebuild the local queue for the next timestep.
 
-<p align="center">![alt text](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/images/GraphPartition)</p>
+<p align="center">![alt text](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/GraphPartition.png)</p>
 
 To eliminate allocation overhead during the communication phase, we pre-allocate a fixed T × T matrix of vectors for the mailboxes. Each thread appends indices of packages that need to move to another partition into its row, before each thread concatenates the columns addressed to it into its local package queue. These vectors are reused across timesteps, providing a stable memory footprint for inter-thread communication. Because each vector row is owned by exactly one thread and each column is read only after a barrier, all pushes and reads are free of contentions. Hence, in this partition scheme, edge conflicts are resolved locally, cross-thread traffic is batched and predictable, and cache locality inside each partition is improved significantly.
 
@@ -103,7 +100,12 @@ A critical optimization in our approach is the management of these new candidate
 
 At the end of a round, we merge these private buffers into the global frontier array using a two-step parallel process. First, we compute the starting write position for each thread by calculating the prefix sum of the buffer sizes. If Thread 0 has `N0` items, Thread 1 knows to begin writing at index `N0`, reserving a non-overlapping segment of the global array for each thread. Once these offsets are known, all threads copy their data into their reserved segments simultaneously, avoiding the serialization of a shared atomic counter and allowing memory bandwidth to be fully utilized during the merge.
 
-<p align="center">![alt text](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/images/KCore)</p>
+<p align="center">![alt text](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/KCore.png)</p>
+
+## Results
+Please refer to our final report for experiment results and benchmarks at https://docs.google.com/document/d/1oxg-tKCexYw8OshllP46ZXYg4PcXCuVVvzN8hx8QYuI/. 
+
+In general, we observed good speedup on both GHC and PSC machines up to 8 threads, and concluded the Edge Parallel scheme to be generally more useful than the Graph Partition scheme, espcially in test cases like large_imbalance. We discovered less than theoretical speedup (8x) at around 4.5x to 7.8x speedup on different test cases due to unparallelizable work, such as the precomputation of BFS must happen before simulation. In particular, barriers and implicit waiting are a dominant factor in achieving less than theoretical speedup. For multi-package routing, we also discovered that sensitivity to graph density is higher than sensitivty to the number of packages. 
 
 ## References
 - Batagelj, V., & Zaversnik, M. (2003). An O(m) Algorithm for Cores Decomposition of Networks. arXiv preprint cs/0310049.
@@ -113,5 +115,7 @@ At the end of a round, we merge these private buffers into the global frontier a
 
 ## Documents
 Proposal: https://docs.google.com/document/d/1eNZh5MjM0KwcqvB14qrfGHoRefIECy8Bp2h_8brXHOQ/
+
 Milestone Report: https://docs.google.com/document/d/1fJGb3wdToGd9lI4-tq156Pgj-uxjkK_7oeaf3CegNPs/
+
 Final Report: https://docs.google.com/document/d/1oxg-tKCexYw8OshllP46ZXYg4PcXCuVVvzN8hx8QYuI/
