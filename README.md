@@ -63,7 +63,7 @@ Every undirected edge in the graph is represented by two slots in a flat, global
 - Reservation Phase: Threads attempt to reserve the edge corresponding to the chosen move. Each thread computes the unique slot index for the edge that connects the current vertex to its selected next hop, and performs an atomic Compare-And-Swap (CAS) operation. If CAS succeeds, the package claims the edge for the current timestep. If CAS fails, another package has already claimed the edge, forcing the current package to stall.
 
 <div align="center"> 
-  ![Edge Parallel](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/EdgeParallel.png) 
+  ![Edge Parallel](https://raw.githubusercontent.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/EdgeParallel.png) 
 </div>
 
 These two phases are followed by a cleanup and commit phase. This design transforms the contention logic from a centralized serial queue into thousands of independent micro-contests distributed across memory, significantly reducing allocator pressure and serialization.
