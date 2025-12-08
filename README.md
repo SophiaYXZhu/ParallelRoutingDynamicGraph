@@ -62,7 +62,7 @@ Every undirected edge in the graph is represented by two slots in a flat, global
 - Decision Phase: Threads iterate over their assigned static chunk of packages. For each active package, the thread scans the adjacency list of the package’s current vertex and queries the precomputed BFS distance matrix dist to select the neighbor that maximally reduces the distance to the destination.
 - Reservation Phase: Threads attempt to reserve the edge corresponding to the chosen move. Each thread computes the unique slot index for the edge that connects the current vertex to its selected next hop, and performs an atomic Compare-And-Swap (CAS) operation. If CAS succeeds, the package claims the edge for the current timestep. If CAS fails, another package has already claimed the edge, forcing the current package to stall.
 
-![Edge Parallel](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/EdgeParallel.png)
+<div align="center"> ![Edge Parallel](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/EdgeParallel.png) </div>
 
 These two phases are followed by a cleanup and commit phase. This design transforms the contention logic from a centralized serial queue into thousands of independent micro-contests distributed across memory, significantly reducing allocator pressure and serialization.
 
@@ -78,7 +78,7 @@ The graph vertices are statically partitioned among T threads using either a cyc
 - Exchange Phase: If a package moves to a vertex owned by a different thread, the thread enqueues the package index into an outgoing mailbox. A global barrier separates the calculation and communication phases, ensuring that all writes to the mailboxes are visible before reading.
 - Merge Phase: Threads scan the mailboxes addressed to them, retrieving incoming packages and merging them with the packages that remained within the partition to rebuild the local queue for the next timestep.
 
-<p align="center">![alt text](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/GraphPartition.png)</p>
+<div align="center"> ![Edge Parallel](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/GraphPartition.png) </div>
 
 To eliminate allocation overhead during the communication phase, we pre-allocate a fixed T × T matrix of vectors for the mailboxes. Each thread appends indices of packages that need to move to another partition into its row, before each thread concatenates the columns addressed to it into its local package queue. These vectors are reused across timesteps, providing a stable memory footprint for inter-thread communication. Because each vector row is owned by exactly one thread and each column is read only after a barrier, all pushes and reads are free of contentions. Hence, in this partition scheme, edge conflicts are resolved locally, cross-thread traffic is batched and predictable, and cache locality inside each partition is improved significantly.
 
@@ -100,7 +100,7 @@ A critical optimization in our approach is the management of these new candidate
 
 At the end of a round, we merge these private buffers into the global frontier array using a two-step parallel process. First, we compute the starting write position for each thread by calculating the prefix sum of the buffer sizes. If Thread 0 has `N0` items, Thread 1 knows to begin writing at index `N0`, reserving a non-overlapping segment of the global array for each thread. Once these offsets are known, all threads copy their data into their reserved segments simultaneously, avoiding the serialization of a shared atomic counter and allowing memory bandwidth to be fully utilized during the merge.
 
-<p align="center">![alt text](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/KCore.png)</p>
+<div align="center"> ![Edge Parallel](https://github.com/SophiaYXZhu/ParallelRoutingDynamicGraph/blob/main/images/KCore.png) </div>
 
 ## Results
 Please refer to our final report for experiment results and benchmarks at https://docs.google.com/document/d/1oxg-tKCexYw8OshllP46ZXYg4PcXCuVVvzN8hx8QYuI/. 
